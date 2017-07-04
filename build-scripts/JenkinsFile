@@ -14,8 +14,6 @@ node("${nodeLabel}") {
                       credentialsId   : gitCredentialsID,
                       usernameVariable: 'GIT_USERNAME',
                       passwordVariable: 'GIT_PASSWORD']]) {
-
-<<<<<<< a56f73b7a1ba23b6973793908238c06343b25df3
                 checkout([
                         $class                           : 'GitSCM',
                         branches                         : [[name: '*/master']],
@@ -37,24 +35,6 @@ node("${nodeLabel}") {
                     }
                 }
             }
-=======
-def mvnHome
-def dockerHost
-node("openstack-apim") {
-
-    stage('Preparation') {
-        dockerHost = env.DOCKER_HOST
-        mvnHome = tool 'apache-maven-3.0.5'
-        checkout([$class      : 'GitSCM', branches: [[name: '*/C5']], doGenerateSubmoduleConfigurations: false,
-                  extensions  : [[$class: 'CloneOption', reference: '', shallow: true]],
-                  submoduleCfg: [], userRemoteConfigs: [[name: 'C5', refspec: '+refs/heads/C5:refs/remotes/origin/C5',
-                                                         url : 'https://github.com/wso2/carbon-apimgt.git']]])
-    }
-    stage('Building carbon-apimgt with unit test') {
-        // Run the maven build
-        withEnv(["JAVA_HOME=${tool 'Oracle-JDK-1.8.0_45'}", "PATH+MAVEN=${mvnHome}/bin:${env.JAVA_HOME}/bin"]) {
-            sh "'${mvnHome}/bin/mvn' clean install -Dmaven.test.failure.ignore "
->>>>>>> sso feature initial commit
         }
         stage('Building carbon-apimgt with unit test') {
             // Run the maven build
