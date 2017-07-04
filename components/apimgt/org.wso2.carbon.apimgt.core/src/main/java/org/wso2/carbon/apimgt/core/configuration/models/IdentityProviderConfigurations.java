@@ -35,8 +35,6 @@ public class IdentityProviderConfigurations {
     private CredentialConfigurations identityProviderCredentials = new CredentialConfigurations();
     @Element(description = "Alias of Identity Provider Certificate in Client Trust Store")
     private String idpCertAlias = "wso2carbon";
-    @Element(description = "SSO Enabled or not")
-    private Boolean ssoEnabled = true;
 
     public String getIdentityProviderImplClass() {
         return identityProviderImplClass;
@@ -52,9 +50,5 @@ public class IdentityProviderConfigurations {
 
     public String getIdpCertAlias() {
         return idpCertAlias;
-    }
-
-    public Boolean getSsoEnabled() {
-        return ssoEnabled;
     }
 }
