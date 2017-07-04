@@ -17,24 +17,46 @@
  */
 package org.wso2.carbon.apimgt.authenticator;
 
+import com.google.gson.JsonObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.wso2.carbon.apimgt.authenticator.configuration.models.APIMStoreConfigurations;
 import org.wso2.carbon.apimgt.authenticator.constants.AuthenticatorConstants;
 import org.wso2.carbon.apimgt.authenticator.dto.ErrorDTO;
 import org.wso2.carbon.apimgt.authenticator.utils.AuthUtil;
 import org.wso2.carbon.apimgt.authenticator.utils.bean.AuthResponseBean;
+import org.wso2.carbon.apimgt.core.api.APIDefinition;
+import org.wso2.carbon.apimgt.core.api.KeyManager;
 import org.wso2.carbon.apimgt.core.exception.APIManagementException;
 import org.wso2.carbon.apimgt.core.exception.ExceptionCodes;
+import org.wso2.carbon.apimgt.core.exception.KeyManagementException;
+import org.wso2.carbon.apimgt.core.impl.APIDefinitionFromSwagger20;
+import org.wso2.carbon.apimgt.core.impl.APIManagerFactory;
+import org.wso2.carbon.apimgt.core.models.AccessTokenInfo;
+import org.wso2.carbon.apimgt.core.models.AccessTokenRequest;
+import org.wso2.carbon.apimgt.core.models.OAuthAppRequest;
+import org.wso2.carbon.apimgt.core.models.OAuthApplicationInfo;
+import org.wso2.carbon.apimgt.core.models.Scope;
+import org.wso2.carbon.apimgt.core.util.ApplicationUtils;
+import org.wso2.carbon.apimgt.core.util.KeyManagerConstants;
 import org.wso2.carbon.apimgt.rest.api.common.APIConstants;
+import org.wso2.carbon.apimgt.rest.api.common.util.RestApiUtil;
 import org.wso2.msf4j.Microservice;
 import org.wso2.msf4j.Request;
 import org.wso2.msf4j.formparam.FormDataParam;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import javax.ws.rs.Consumes;
+import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.NewCookie;
 import javax.ws.rs.core.Response;
@@ -146,9 +168,167 @@ public class AuthenticatorAPI implements Microservice {
         }
     }
 
+    /**
+     * This method provides the DCR application information to the SSO-IS login.
+     *
+     */
+    @GET
+    @Path("/dcr")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response redirect(@Context Request request) {
+        String appContext = AuthUtil.getAppContext(request);
+        List<String> grantTypes = new ArrayList<>();
+        grantTypes.add("password");
+        grantTypes.add("authorization_code");
+        grantTypes.add("refresh_token");
+        Long validityPeriod = 3600L;
+        OAuthApplicationInfo oAuthApplicationInfo;
+        try {
+            String storeRestAPI = RestApiUtil.getStoreRestAPIResource();
+            APIDefinition apiDefinitionFromSwagger20 = new APIDefinitionFromSwagger20();
+            Map<String, Scope> storeScopesMap = apiDefinitionFromSwagger20.getScopes(storeRestAPI);
+            final StringBuffer scopes = new StringBuffer();
+            storeScopesMap.keySet().forEach(key -> {
+                scopes.append(key).append(" ");
+            });
+            String storeScopes = scopes.toString();
+            storeScopes = storeScopes + KeyManagerConstants.OPEN_ID_CONNECT_SCOPE;
+            oAuthApplicationInfo = createDCRApplication(appContext.substring(1), grantTypes, validityPeriod);
+            if (oAuthApplicationInfo != null) {
+                String oAuthApplicationClientId = oAuthApplicationInfo.getClientId();
+                String oAuthApplicationCallBackURL = oAuthApplicationInfo.getCallbackUrl();
+                String oAuthApplicationClientSecret = oAuthApplicationInfo.getClientSecret();
+
+                JsonObject oAuthData = new JsonObject();
+                oAuthData.addProperty("client_id" , oAuthApplicationClientId);
+                oAuthData.addProperty("callback_URL" , oAuthApplicationCallBackURL);
+                oAuthData.addProperty("scopes" , storeScopes);
+                oAuthData.addProperty("client_secret" , oAuthApplicationClientSecret);
+                APIMStoreConfigurations storeConfigs = new APIMStoreConfigurations();
+                oAuthData.addProperty("isSSOEnabled" , storeConfigs.getIsSSOEnabled());
+                return Response.status(Response.Status.OK).entity(oAuthData).build();
+            } else {
+                log.warn("No information available in OAuth application.");
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR)
+                        .entity("Error while creating the OAuth application!").build();
+            }
+        } catch (APIManagementException e) {
+            ErrorDTO errorDTO = AuthUtil.getErrorDTO(e.getErrorHandler(), null);
+            log.error(e.getMessage(), e);
+            return Response.status(e.getErrorHandler().getHttpStatusCode()).entity(errorDTO).build();
+        }
+    }
+
+    /**
+     * This method requests the access token and redirects the user to a given URL.
+     *
+     */
+    @GET
+    @Path("/callback")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response callback(@Context Request request) {
+        String appContext = AuthUtil.getAppContext(request);
+        String appName = appContext.substring(1);
+        String restAPIContext;
+        APIMStoreConfigurations storeConfigs = new APIMStoreConfigurations();
+        if (appContext.contains("editor")) {
+            restAPIContext = AuthenticatorConstants.REST_CONTEXT + "/publisher";
+        } else {
+            restAPIContext = AuthenticatorConstants.REST_CONTEXT + appContext;
+        }
+        String grantType = "authorization_code";
+        String callbackURI = "https://localhost:9292/store/auth/apis/login/callback";
+        Long validityPeriod = 3600L;
+        // Get the Authorization Code
+        String requestURL = (String) request.getProperty("REQUEST_URL");
+        String authorizationCode = requestURL.split("=")[1].split("&")[0];
+        log.info("Authorization Code for the app " + appName + ": " + authorizationCode);
+        try {
+            // Set scopes
+            String storeRestAPI = RestApiUtil.getStoreRestAPIResource();
+            APIDefinition apiDefinitionFromSwagger20 = new APIDefinitionFromSwagger20();
+            Map<String, Scope> storeScopesMap = apiDefinitionFromSwagger20.getScopes(storeRestAPI);
+            final StringBuffer scopes = new StringBuffer();
+            storeScopesMap.keySet().forEach(key -> {
+                scopes.append(key).append(" ");
+            });
+            String storeScopes = scopes.toString();
+            storeScopes = storeScopes + KeyManagerConstants.OPEN_ID_CONNECT_SCOPE;
+            // Get Access & Refresh Tokens
+            LoginTokenService loginTokenService = new LoginTokenService();
+            AccessTokenRequest accessTokenRequest = new AccessTokenRequest();
+            AuthResponseBean authResponseBean = new AuthResponseBean();
+            Map<String, String> consumerKeySecretMap = loginTokenService.getConsumerKeySecret(appName);
+            accessTokenRequest.setClientId(consumerKeySecretMap.get("CONSUMER_KEY"));
+            accessTokenRequest.setClientSecret(consumerKeySecretMap.get("CONSUMER_SECRET"));
+            accessTokenRequest.setGrantType(grantType);
+            accessTokenRequest.setAuthorizationCode(authorizationCode);
+            accessTokenRequest.setValidityPeriod(validityPeriod);
+            accessTokenRequest.setScopes(storeScopes);
+            accessTokenRequest.setCallbackURI(callbackURI);
+            AccessTokenInfo accessTokenInfo = APIManagerFactory.getInstance().getKeyManager()
+                    .getNewAccessToken(accessTokenRequest);
+            loginTokenService.setAccessTokenData(authResponseBean, accessTokenInfo);
+            String accessToken = accessTokenInfo.getAccessToken();
+            String refreshToken = accessTokenInfo.getRefreshToken();
+            log.info("Access Token for the app " + appName + ": " + accessToken);
+            log.info("Refresh Token for the app " + appName + ": " + refreshToken);
+
+            // Set Access Token cookies
+            String part1 = accessToken.substring(0, accessToken.length() / 2);
+            String part2 = accessToken.substring(accessToken.length() / 2);
+            NewCookie cookieWithAppContext = AuthUtil
+                    .cookieBuilder(AuthenticatorConstants.ACCESS_TOKEN_1, part1, appContext, true, false, "");
+            NewCookie httpOnlyCookieWithAppContext = AuthUtil
+                    .cookieBuilder(AuthenticatorConstants.ACCESS_TOKEN_2, part2, appContext, true, true, "");
+            NewCookie restAPIContextCookie = AuthUtil
+                    .cookieBuilder(APIConstants.AccessTokenConstants.AM_TOKEN_MSF4J, part2, restAPIContext, true, true,
+                            "");
+            String authUser = authResponseBean.getAuthUser();
+            NewCookie authUserCookie = AuthUtil
+                    .cookieBuilder(AuthenticatorConstants.AUTH_USER, authUser, appContext, true, false, "");
+            // Redirect to the store/apis page (redirect URL)
+            URI targetURIForRedirection = new URI(storeConfigs.getApimBaseUrl() + appName + "/apis");
+            return Response.status(Response.Status.FOUND)
+                    .header(HttpHeaders.LOCATION, targetURIForRedirection).entity(authResponseBean)
+                    .cookie(cookieWithAppContext, httpOnlyCookieWithAppContext, restAPIContextCookie, authUserCookie)
+                    .build();
+        } catch (APIManagementException e) {
+            ErrorDTO errorDTO = AuthUtil.getErrorDTO(e.getErrorHandler(), null);
+            log.error(e.getMessage(), e);
+            return Response.status(e.getErrorHandler().getHttpStatusCode()).entity(errorDTO).build();
+        } catch (URISyntaxException e) {
+            log.error(e.getMessage(), e);
+            return Response.status(e.getIndex()).build();
+        }
+    }
+
+    /**
+     * This method creates a DCR application.
+     * @return OAUthApplicationInfo - An object with DCR Application information
+     */
+    private OAuthApplicationInfo createDCRApplication(String clientName, List<String> grantTypes, Long validityPeriod)
+            throws APIManagementException {
+        KeyManager keyManager = APIManagerFactory.getInstance().getKeyManager();
+        OAuthAppRequest oAuthAppRequest = null;
+        OAuthApplicationInfo oAuthApplicationInfo;
+        try {
+            oAuthAppRequest = ApplicationUtils.createOauthAppRequest(
+                    clientName, "https://localhost:9292/store/auth/apis/login/callback", grantTypes);
+            oAuthAppRequest.getOAuthApplicationInfo().addParameter(KeyManagerConstants.VALIDITY_PERIOD, validityPeriod);
+            oAuthAppRequest.getOAuthApplicationInfo().addParameter(KeyManagerConstants.APP_KEY_TYPE, "application");
+            oAuthApplicationInfo = keyManager.createApplication(oAuthAppRequest);
+        } catch (KeyManagementException e) {
+            String errorMsg = "Error while creating the keys for OAuth application : " + clientName;
+            log.error(errorMsg, e, ExceptionCodes.OAUTH2_APP_CREATION_FAILED);
+            throw new APIManagementException(errorMsg, e, ExceptionCodes.OAUTH2_APP_CREATION_FAILED);
+        }
+        return oAuthApplicationInfo;
+    }
+
     @POST
-    @Produces (MediaType.APPLICATION_JSON)
-    @Path ("/revoke")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/revoke")
     public Response logout(@Context Request request) {
         String appContext = AuthUtil.getAppContext(request);
         String restAPIContext;
@@ -188,7 +368,5 @@ public class AuthenticatorAPI implements Microservice {
         errorDTO.setCode(ExceptionCodes.INVALID_AUTHORIZATION_HEADER.getErrorCode());
         errorDTO.setMessage(ExceptionCodes.INVALID_AUTHORIZATION_HEADER.getErrorMessage());
         return Response.status(Response.Status.UNAUTHORIZED).entity(errorDTO).build();
-
     }
-
 }

@@ -155,10 +155,7 @@ public class KeyManagerUtil {
     }
 
     public static boolean validateUser(String userName, String password) {
-        if (userMap.containsKey(userName) && password.equals(userMap.get(userName))) {
-            return true;
-        }
-        return false;
+        return userMap.containsKey(userName) && password.equals(userMap.get(userName));
     }
 
     /**
