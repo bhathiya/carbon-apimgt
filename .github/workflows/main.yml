@@ -18,7 +18,7 @@ jobs:
         node-version: '14.x'
     - name: Test Script
       run: |
-        /bin/bash codecov.sh -n  -F unittests -Q github-action
+        /bin/bash <(curl -s https://codecov.io/bash)
     - name: Build carbon-apimgt with Test.
       run: mvn clean install --file pom.xml
     - name: Upload unit test coverage to Codecov
