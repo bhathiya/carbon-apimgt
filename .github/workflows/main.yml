@@ -20,7 +20,7 @@ jobs:
       run: mvn clean install --file pom.xml
     - name: Upload unit test coverage to Codecov
       run: |
-        /bin/bash <(curl -s https://codecov.io/bash)
+        /bin/bash <(curl -s https://codecov.io/bash) -F unit_tests -Q github-action
     - name: Get carbon.apimgt.version
       run: mvn help:evaluate -Dexpression=project.version -q -DforceStdout > ../CARBON_APIMGT_VERSION_FILE
     - name: Print carbon.apimgt.version
@@ -35,4 +35,4 @@ jobs:
       run: mvn clean install -Dcarbon.apimgt.version=$(cat ../CARBON_APIMGT_VERSION_FILE) -fae --file ../product-apim/pom.xml
     - name: Upload integration test coverage to Codecov
       run: |
-        /bin/bash <(curl -s https://codecov.io/bash)
+        /bin/bash <(curl -s https://codecov.io/bash) -F integration_tests -Q github-action
