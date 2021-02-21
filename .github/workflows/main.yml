@@ -35,4 +35,4 @@ jobs:
       run: mvn clean install -Dcarbon.apimgt.version=$(cat ../CARBON_APIMGT_VERSION_FILE) -fae --file ../product-apim/pom.xml
     - name: Upload integration test coverage to Codecov
       run: |
-        /bin/bash <(curl -s https://codecov.io/bash) -F integration_tests -Q github-action
+        /bin/bash <(curl -s https://codecov.io/bash) -s ../product-apim/ -F integration_tests -Q github-action
